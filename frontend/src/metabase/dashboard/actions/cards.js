@@ -41,7 +41,9 @@ export const addCardToDashboard =
       .getObject(getState(), { entityId: cardId })
       .card();
     const visualization = getVisualizationRaw([{ card }]);
-    const createdCardSize = visualization.defaultSize || DEFAULT_CARD_SIZE;
+    // const createdCardSize = visualization.defaultSize || DEFAULT_CARD_SIZE;
+    // TODO: add by guoqy
+    const createdCardSize = DEFAULT_CARD_SIZE || visualization.defaultSize;
 
     const dashboardState = getState().dashboard;
 
@@ -109,6 +111,9 @@ export const addDashCardToDashboard = function ({
   tabId,
 }) {
   return function (dispatch, getState) {
+    console.log(`tabid: ${tabId} jdike`);
+    console.log(`dashcard overrides: jdike`);
+    console.log(dashcardOverrides);
     const visualization = getVisualizationRaw([dashcardOverrides]);
     const createdCardSize = visualization.defaultSize || DEFAULT_CARD_SIZE;
 
@@ -134,6 +139,8 @@ export const addDashCardToDashboard = function ({
       parameter_mappings: [],
       visualization_settings: {},
     };
+    console.log("dashcard: iekd");
+    console.log(dashcard);
     _.extend(dashcard, dashcardOverrides);
     dispatch(createAction(ADD_CARD_TO_DASH)(dashcard));
   };
@@ -175,6 +182,28 @@ export const addHeadingDashCardToDashboard = function ({ dashId, tabId }) {
     visualization_settings: {
       virtual_card: virtualTextCard,
       "dashcard.background": false,
+    },
+  };
+  return addDashCardToDashboard({
+    dashId: dashId,
+    dashcardOverrides: dashcardOverrides,
+    tabId,
+  });
+};
+
+export const addIndicateDashCardToDashboard = function ({ dashId, tabId }) {
+  trackCardCreated("indicateView", dashId);
+
+  const virtualTextCard = {
+    ...createCard(),
+    display: "indicateView",
+    archived: false,
+  };
+
+  const dashcardOverrides = {
+    card: virtualTextCard,
+    visualization_settings: {
+      virtual_card: virtualTextCard,
     },
   };
   return addDashCardToDashboard({
