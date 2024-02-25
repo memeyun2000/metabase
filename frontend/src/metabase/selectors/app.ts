@@ -1,7 +1,7 @@
 import type { Location } from "history";
 import type { Selector } from "@reduxjs/toolkit";
 import { createSelector } from "@reduxjs/toolkit";
-import { getUser } from "metabase/selectors/user";
+import { getUser, getUserIsAdmin } from "metabase/selectors/user";
 import {
   getIsEditing as getIsEditingDashboard,
   getDashboard,
@@ -119,6 +119,7 @@ export const getIsAppBarVisible = createSelector(
     getIsEditingDashboard,
     getIsEmbedded,
     getIsEmbeddedAppBarVisible,
+    getUserIsAdmin,
   ],
   (
     currentUser,
@@ -128,8 +129,12 @@ export const getIsAppBarVisible = createSelector(
     isEditingDashboard,
     isEmbedded,
     isEmbeddedAppBarVisible,
+    isAdmin,
   ) => {
     const isFullscreen = hash.includes("fullscreen");
+    if(!isAdmin) {
+      return false;
+    }
 
     if (
       !currentUser ||
