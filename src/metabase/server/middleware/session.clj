@@ -26,10 +26,12 @@
    [metabase.util.log :as log]
    [ring.util.response :as response]
    [schema.core :as s]
+   [cheshire.core :as json]
    [toucan2.core :as t2]
    [toucan2.pipeline :as t2.pipeline])
   (:import
-   (java.util UUID)))
+    (java.util UUID)
+    (cn.hutool.core.codec Base64Decoder)))
 
 ;; How do authenticated API requests work? Metabase first looks for a cookie called `metabase.SESSION`. This is the
 ;; normal way of doing things; this cookie gets set automatically upon login. `metabase.SESSION` is an HttpOnly
@@ -49,6 +51,7 @@
 (def ^:private ^String metabase-embedded-session-cookie "metabase.EMBEDDED_SESSION")
 (def ^:private ^String metabase-session-timeout-cookie  "metabase.TIMEOUT")
 (def ^:private ^String anti-csrf-token-header           "x-metabase-anti-csrf-token")
+(def ^:private ^String hr-session-cookie                "Authorization")
 
 (defn- clear-cookie [response cookie-name]
   (response/set-cookie response cookie-name nil {:expires "Thu, 1 Jan 1970 00:00:00 GMT", :path "/"}))
@@ -174,6 +177,28 @@
     ;; Otherwise check whether the user selected "remember me" during login
     (get-in request [:body :remember])))
 
+(defn wrap-hr-token-pre
+  [token]
+  (subs token (+ (.indexOf token ".") 1)))
+
+(defn wrap-hr-token-json-str
+  [token]
+  (Base64Decoder/decodeStr (subs
+     (wrap-hr-token-pre token)
+     0
+     (.lastIndexOf (wrap-hr-token-pre token) "."))))
+
+(defn wrap-hr-token-for-userid
+  [token]
+  ;(parse-long
+  ;  (get
+  ;    (json/parse-string (wrap-hr-token-json-str token))
+  ;    "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")))
+  (get
+  (json/parse-string (wrap-hr-token-json-str token))
+  "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")
+  )
+
 (s/defn set-session-cookies
   "Add the appropriate cookies to the `response` for the Session."
   [request
@@ -235,12 +260,18 @@
     (when (seq session)
       (assoc request :metabase-session-id session))))
 
+(defmethod wrap-session-id-with-strategy :hr
+  [_ {:keys [cookies], :as request}]
+  (when-let [token (get-in cookies [hr-session-cookie :value])]
+    (when (seq token)
+      (assoc request :hr-user-id (wrap-hr-token-for-userid token) :metabase-session-type :normal))))
+
 (defmethod wrap-session-id-with-strategy :best
   [_ request]
   (some
    (fn [strategy]
      (wrap-session-id-with-strategy strategy request))
-   [:embedded-cookie :normal-cookie :header]))
+   [:embedded-cookie :hr :normal-cookie :header]))
 
 (defn wrap-session-id
   "Middleware that sets the `:metabase-session-id` keyword on the request if a session id can be found.
@@ -290,6 +321,33 @@
                                                  [:= :pgm.user_id :user.id]
                                                  [:is :pgm.is_group_manager true]]))))))))
 
+(def ^:private ^{:arglists '([db-type max-age-minutes session-type enable-advanced-permissions?])} session-with-userid-query
+  (memoize
+    (fn [db-type max-age-minutes session-type enable-advanced-permissions?]
+      (first
+        (t2.pipeline/compile*
+          (cond-> {:select    [[:user.id :metabase-user-id]
+                               [:user.is_superuser :is-superuser?]
+                               [:user.locale :user-locale]]
+                   :from      [[:core_user :user]]
+                   :where     [:and
+                               [:= :user.is_active true]
+                               [:= :user.id [:raw "?"]]
+                               (let [oldest-allowed [:inline (sql.qp/add-interval-honeysql-form db-type
+                                                                                                :%now
+                                                                                                (- max-age-minutes)
+                                                                                                :minute)]])
+                               ]
+                   :limit     [:inline 1]}
+                  enable-advanced-permissions?
+                  (->
+                    (sql.helpers/select
+                      [:pgm.is_group_manager :is-group-manager?])
+                    (sql.helpers/left-join
+                      [:permissions_group_membership :pgm] [:and
+                                                            [:= :pgm.user_id :user.id]
+                                                            [:is :pgm.is_group_manager true]]))))))))
+
 (defn- current-user-info-for-session
   "Return User ID and superuser status for Session with `session-id` if it is valid and not expired."
   [session-id anti-csrf-token]
@@ -305,14 +363,40 @@
               ;; is-group-manager? could return `nil, convert it to boolean so it's guaranteed to be only true/false
               (update :is-group-manager? boolean)))))
 
+(defn- current-userid-info-for-session
+  "Return User ID and superuser status for Session with `session-id` if it is valid and not expired."
+  [user-id anti-csrf-token]
+  (println "login with hr userid")
+  (when (and user-id (init-status/complete?))
+    (let [sql    (session-with-userid-query (mdb/db-type)
+                                        (config/config-int :max-session-age)
+                                        (if (seq anti-csrf-token) :full-app-embed :normal)
+                                        (premium-features/enable-advanced-permissions?))
+          params (concat [user-id]
+                         (when (seq anti-csrf-token)
+                           [anti-csrf-token]))]
+      (some-> (t2/query-one (cons sql params))
+              ;; is-group-manager? could return `nil, convert it to boolean so it's guaranteed to be only true/false
+              (update :is-group-manager? boolean)))))
+
 (defn- merge-current-user-info
-  [{:keys [metabase-session-id anti-csrf-token], {:strs [x-metabase-locale]} :headers, :as request}]
-  (merge
-   request
-   (current-user-info-for-session metabase-session-id anti-csrf-token)
-   (when x-metabase-locale
-     (log/tracef "Found X-Metabase-Locale header: using %s as user locale" (pr-str x-metabase-locale))
-     {:user-locale (i18n/normalized-locale-string x-metabase-locale)})))
+  [{:keys [metabase-session-id anti-csrf-token hr-user-id], {:strs [x-metabase-locale]} :headers, :as request}]
+  (if (not-empty hr-user-id)
+    (merge
+      request
+      ;{:metabase-user-id hr-user-id}
+      (current-userid-info-for-session hr-user-id anti-csrf-token)
+      (when x-metabase-locale
+        (log/tracef "Found X-Metabase-Locale header: using %s as user locale" (pr-str x-metabase-locale))
+        {:user-locale (i18n/normalized-locale-string x-metabase-locale)}))
+    (merge
+      request
+      (current-user-info-for-session metabase-session-id anti-csrf-token)
+      (when x-metabase-locale
+        (log/tracef "Found X-Metabase-Locale header: using %s as user locale" (pr-str x-metabase-locale))
+        {:user-locale (i18n/normalized-locale-string x-metabase-locale)}))
+    )
+  )
 
 (defn wrap-current-user-info
   "Add `:metabase-user-id`, `:is-superuser?`, `:is-group-manager?` and `:user-locale` to the request if a valid session token was passed."
