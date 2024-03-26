@@ -124,9 +124,11 @@
 
 (defn- content-security-policy-header-with-frame-ancestors
   [allow-iframes? nonce]
-  (update (content-security-policy-header nonce)
-          "Content-Security-Policy"
-          #(format "%s frame-ancestors %s;" % (if allow-iframes? "*" (or (embedding-app-origin) "'none'")))))
+  ; add by guoqingyun 允许使用iframe
+  ;(update (content-security-policy-header nonce)
+  ;        "Content-Security-Policy"
+  ;        #(format "%s frame-ancestors %s;" % (if allow-iframes? "*" (or (embedding-app-origin) "'none'"))))
+  )
 
 (defsetting ssl-certificate-public-key
   (deferred-tru
@@ -156,9 +158,11 @@
    (content-security-policy-header-with-frame-ancestors allow-iframes? nonce)
    (when-not allow-iframes?
      ;; Tell browsers not to render our site as an iframe (prevent clickjacking)
+     ; add by guoqingyun 允许使用iframe
+     ;{"X-Frame-Options"                 (format "ALLOW-FROM %s" (first-embedding-app-origin))}
      {"X-Frame-Options"                 (if (embedding-app-origin)
                                           (format "ALLOW-FROM %s" (first-embedding-app-origin))
-                                          "DENY")})
+                                          (format "ALLOW-FROM %s" (first-embedding-app-origin)))})
    { ;; Tell browser to block suspected XSS attacks
     "X-XSS-Protection"                  "1; mode=block"
     ;; Prevent Flash / PDF files from including content from site.
