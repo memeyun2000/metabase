@@ -48,6 +48,7 @@
    [metabase.api.transform :as api.transform]
    [metabase.api.user :as api.user]
    [metabase.api.util :as api.util]
+   [metabase.api.sso.ecology :as api.sso.ecology]
    [metabase.config :as config]
    [metabase.plugins.classloader :as classloader]
    [metabase.util.i18n :refer [deferred-tru]]))
@@ -114,4 +115,5 @@
   (context "/transform"            [] (+auth api.transform/routes))
   (context "/user"                 [] (+auth api.user/routes))
   (context "/util"                 [] api.util/routes)
+  (context "/sso/ecology"          [] api.sso.ecology/routes)
   (route/not-found (constantly {:status 404, :body (deferred-tru "API endpoint does not exist.")})))

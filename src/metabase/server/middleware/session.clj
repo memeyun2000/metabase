@@ -24,6 +24,7 @@
    [metabase.util :as u]
    [metabase.util.i18n :as i18n :refer [deferred-trs deferred-tru trs tru]]
    [metabase.util.log :as log]
+   [metabase.util.encryption :as encryption]
    [ring.util.response :as response]
    [schema.core :as s]
    [cheshire.core :as json]
@@ -52,6 +53,7 @@
 (def ^:private ^String metabase-session-timeout-cookie  "metabase.TIMEOUT")
 (def ^:private ^String anti-csrf-token-header           "x-metabase-anti-csrf-token")
 (def ^:private ^String hr-session-cookie                "Authorization")
+(def ^:private ^String metabase-oauth-emplid-encrypt            "metabase.OAUTH_EMPLID_ENCRYPT")
 
 (defn- clear-cookie [response cookie-name]
   (response/set-cookie response cookie-name nil {:expires "Thu, 1 Jan 1970 00:00:00 GMT", :path "/"}))
@@ -199,6 +201,11 @@
   "http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier")
   )
 
+(defn wrap-ecology-token-for-userid
+  [encrypt_str]
+  (encryption/decrypt (encryption/secret-key->hash "ecology") encrypt_str)
+  )
+
 (s/defn set-session-cookies
   "Add the appropriate cookies to the `response` for the Session."
   [request
@@ -266,12 +273,18 @@
     (when (seq token)
       (assoc request :hr-user-id (wrap-hr-token-for-userid token) :metabase-session-type :normal))))
 
+(defmethod wrap-session-id-with-strategy :ecology
+  [_ {:keys [cookies], :as request}]
+  (when-let [token (get-in cookies [metabase-oauth-emplid-encrypt :value])]
+    (when (seq token)
+      (assoc request :hr-user-id (wrap-ecology-token-for-userid token) :metabase-session-type :normal))))
+
 (defmethod wrap-session-id-with-strategy :best
   [_ request]
   (some
    (fn [strategy]
      (wrap-session-id-with-strategy strategy request))
-   [:embedded-cookie :hr :normal-cookie :header]))
+   [:embedded-cookie :hr :normal-cookie :header :ecology]))
 
 (defn wrap-session-id
   "Middleware that sets the `:metabase-session-id` keyword on the request if a session id can be found.
