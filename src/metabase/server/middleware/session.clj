@@ -379,7 +379,6 @@
 (defn- current-userid-info-for-session
   "Return User ID and superuser status for Session with `session-id` if it is valid and not expired."
   [user-id anti-csrf-token]
-  (println "login with hr userid")
   (when (and user-id (init-status/complete?))
     (let [sql    (session-with-userid-query (mdb/db-type)
                                         (config/config-int :max-session-age)

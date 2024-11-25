@@ -100,7 +100,7 @@
                        response {:status 302
                                  :body nil
                                  :headers {"Location" (get-cookies request metabase-oauth-redirect-path)}}
-                       response (set-cookie request response metabase-oauth-emplid-encrypt emplid_encrypt 60)
+                       response (set-cookie request response metabase-oauth-emplid-encrypt emplid_encrypt (3600 * 3))
                        ]
                    response)
                  )
